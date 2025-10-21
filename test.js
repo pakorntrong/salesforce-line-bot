@@ -313,8 +313,15 @@ async function createCaseInSalesforce(lineUserId, message) {
   }
 }
 // ✅ เพิ่มฟังก์ชันตอบกลับ LINE
+// ✅ ฟังก์ชันตอบกลับ LINE User
 async function replyToLINE(replyToken, message) {
   try {
+    // ตรวจสอบว่ามี Channel Access Token
+    if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+      console.log('❌ LINE_CHANNEL_ACCESS_TOKEN not found');
+      return;
+    }
+
     const response = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
       headers: {
@@ -333,16 +340,21 @@ async function replyToLINE(replyToken, message) {
     });
 
     if (!response.ok) {
-      throw new Error(`LINE API error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`LINE API error: ${response.status} - ${errorText}`);
     }
 
-    console.log('✅ Replied to LINE user');
+    console.log('✅ Replied to LINE user successfully');
+    return await response.json();
+    
   } catch (error) {
-    console.error('❌ Failed to reply to LINE:', error);
+    console.error('❌ Failed to reply to LINE:', error.message);
+    throw error;
   }
 }
 
 // ✅ อัพเดท webhook endpoint ให้ตอบกลับ用户
+// ✅ อัพเดท webhook endpoint ให้ตอบกลับทันที
 app.post('/webhook/line', express.json({ verify: (req, res, buf) => {
   req.rawBody = buf.toString();
 }}), async (req, res) => {
@@ -378,22 +390,37 @@ app.post('/webhook/line', express.json({ verify: (req, res, buf) => {
           // 1. สร้าง case ใน Salesforce
           const caseResult = await createCaseInSalesforce(userId, userMessage);
           
-          // 2. ตอบกลับ用户
-          let replyMessage = "ขอบคุณสำหรับข้อความของคุณ! เราจะติดต่อกลับไปเร็วๆ นี้ค่ะ";
+          // 2. ตอบกลับ用户แบบอัตโนมัติ
+          let replyMessage = "";
           
+          if (userMessage.includes('สวัสดี') || userMessage.includes('hello')) {
+            replyMessage = "สวัสดีค่ะ! ยินดีต้อนรับสู่บริการของเรา 😊\nมีอะไรให้ช่วยเหลือไหมคะ?";
+          }
+          else if (userMessage.includes('ช่วยเหลือ') || userMessage.includes('help')) {
+            replyMessage = "เราสามารถช่วยเหลือคุณในเรื่อง:\n• สอบถามบริการ\n• รายงานปัญหา\n• ติดต่อเจ้าหน้าที่\n\nกรุณาบอกเราว่าอยากรู้เรื่องอะไรคะ?";
+          }
+          else if (userMessage.includes('ขอบคุณ') || userMessage.includes('thank')) {
+            replyMessage = "ยินดีช่วยเหลือค่ะ! 😊\nหากมีคำถามเพิ่มเติม ทักมาได้ตลอดนะคะ";
+          }
+          else {
+            replyMessage = `ขอบคุณสำหรับข้อความ: "${userMessage}"\nเราได้บันทึกคำขอของคุณแล้ว และจะติดต่อกลับไปเร็วๆ นี้ค่ะ! ✅`;
+          }
+          
+          // เพิ่ม case number ถ้าสร้างสำเร็จ
           if (caseResult && caseResult.id) {
-            replyMessage = `✅ บันทึกข้อความของคุณเรียบร้อยแล้ว (Case: ${caseResult.id.slice(-8)})`;
+            const caseNumber = caseResult.id.slice(-8);
+            replyMessage += `\n\n📝 Case ID: ${caseNumber}`;
           }
           
           await replyToLINE(replyToken, replyMessage);
-          console.log('✅ Case created and user replied');
+          console.log('✅ Replied to user:', replyMessage);
           
         } catch (sfError) {
           console.error('❌ Salesforce error:', sfError.message);
           
           // ตอบกลับ user ว่ามีปัญหา
           try {
-            await replyToLINE(replyToken, "⚠️ ขออภัย มีปัญหาทางเทคนิค กรุณาลองใหม่ในภายหลัง");
+            await replyToLINE(replyToken, "⚠️ ขออภัย มีปัญหาทางเทคนิคในขณะนี้ กรุณาลองใหม่ในภายหลังค่ะ");
           } catch (replyError) {
             console.error('❌ Failed to send error reply:', replyError);
           }
