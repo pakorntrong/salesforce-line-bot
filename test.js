@@ -312,7 +312,99 @@ async function createCaseInSalesforce(lineUserId, message) {
     };
   }
 }
+// ✅ เพิ่มฟังก์ชันตอบกลับ LINE
+async function replyToLINE(replyToken, message) {
+  try {
+    const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
+      },
+      body: JSON.stringify({
+        replyToken: replyToken,
+        messages: [
+          {
+            type: 'text',
+            text: message
+          }
+        ]
+      })
+    });
 
+    if (!response.ok) {
+      throw new Error(`LINE API error: ${response.status}`);
+    }
+
+    console.log('✅ Replied to LINE user');
+  } catch (error) {
+    console.error('❌ Failed to reply to LINE:', error);
+  }
+}
+
+// ✅ อัพเดท webhook endpoint ให้ตอบกลับ用户
+app.post('/webhook/line', express.json({ verify: (req, res, buf) => {
+  req.rawBody = buf.toString();
+}}), async (req, res) => {
+  
+  console.log('📨 LINE Webhook Received');
+  
+  try {
+    // ส่ง 200 ทันที
+    res.status(200).json({ 
+      status: 'OK',
+      message: 'Webhook received successfully'
+    });
+
+    const events = req.body.events;
+    
+    if (!events || !Array.isArray(events)) {
+      console.log('⚠️  No events in webhook');
+      return;
+    }
+
+    console.log(`🔍 Processing ${events.length} events`);
+
+    // Process each event
+    for (let event of events) {
+      if (event.type === 'message' && event.message.type === 'text') {
+        const userMessage = event.message.text;
+        const userId = event.source.userId;
+        const replyToken = event.replyToken;
+        
+        console.log(`💬 Message from ${userId}: ${userMessage}`);
+        
+        try {
+          // 1. สร้าง case ใน Salesforce
+          const caseResult = await createCaseInSalesforce(userId, userMessage);
+          
+          // 2. ตอบกลับ用户
+          let replyMessage = "ขอบคุณสำหรับข้อความของคุณ! เราจะติดต่อกลับไปเร็วๆ นี้ค่ะ";
+          
+          if (caseResult && caseResult.id) {
+            replyMessage = `✅ บันทึกข้อความของคุณเรียบร้อยแล้ว (Case: ${caseResult.id.slice(-8)})`;
+          }
+          
+          await replyToLINE(replyToken, replyMessage);
+          console.log('✅ Case created and user replied');
+          
+        } catch (sfError) {
+          console.error('❌ Salesforce error:', sfError.message);
+          
+          // ตอบกลับ user ว่ามีปัญหา
+          try {
+            await replyToLINE(replyToken, "⚠️ ขออภัย มีปัญหาทางเทคนิค กรุณาลองใหม่ในภายหลัง");
+          } catch (replyError) {
+            console.error('❌ Failed to send error reply:', replyError);
+          }
+        }
+      }
+    }
+
+  } catch (error) {
+    console.error('❌ Webhook processing error:', error);
+  }
+});
 // ✅ เปลี่ยนการเริ่ม server สำหรับ Render.com
 async function startServer() {
   // พยายามเชื่อมต่อ Salesforce (optional)
