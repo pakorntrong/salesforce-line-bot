@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: salesforce-line-bot
+    env: node
+    buildCommand: npm install
+    startCommand: node test.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
